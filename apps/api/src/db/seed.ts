@@ -63,14 +63,14 @@ function _seedDefaults(): void {
   if (existingById) {
     // Migrate email if it was set under an old practice name
     db.prepare('update staff_users set email = ?, practice_id = ? where id = ? and email != ?').run(
-      'admin@lonestarpediatrics.com',
+      'admin@lonestarkidz.com',
       practiceId,
       SEED_STAFF_ID,
-      'admin@lonestarpediatrics.com',
+      'admin@lonestarkidz.com',
     );
   } else {
     const existingByEmail = db.prepare('select id from staff_users where email = ?').get(
-      'admin@lonestarpediatrics.com',
+      'admin@lonestarkidz.com',
     ) as { id: string } | undefined;
     if (!existingByEmail) {
       db.prepare(
@@ -78,7 +78,7 @@ function _seedDefaults(): void {
          values (?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         SEED_STAFF_ID,
-        'admin@lonestarpediatrics.com',
+        'admin@lonestarkidz.com',
         hashPassword('Admin@12345'),
         practiceId,
         'admin',

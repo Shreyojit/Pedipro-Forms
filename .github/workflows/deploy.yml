@@ -127,7 +127,7 @@ jobs:
           source: frontend.tar.gz
           target: /home/ec2-user/
 
-      - name: Extract and configure Nginx
+      - name: Deploy frontend files
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -139,50 +139,7 @@ jobs:
             tar -xzf /home/ec2-user/frontend.tar.gz -C /home/ec2-user/
             cp -r /home/ec2-user/dist-patient/. /var/www/patient/
             cp -r /home/ec2-user/dist-admin/. /var/www/admin/
+            mkdir -p /var/www/patient/assets
+            cp -rn /home/ec2-user/dist-admin/assets/. /var/www/patient/assets/ 2>/dev/null || true
             rm -rf /home/ec2-user/frontend.tar.gz /home/ec2-user/dist-patient /home/ec2-user/dist-admin
-
-            # Write the single unified nginx config (replaces any stale conf.d fragments)
-            sudo tee /etc/nginx/conf.d/lsp.conf > /dev/null <<'NGINXEOF'
-server {
-    listen 80;
-    server_name lonestarpediatrics.com www.lonestarpediatrics.com _;
-    client_max_body_size 100M;
-    root /var/www/patient;
-    index index.html;
-    location ~* \.mjs$ { default_type application/javascript; try_files $uri =404; }
-    location /assets/ { try_files $uri =404; }
-    location /api/ {
-        proxy_pass http://127.0.0.1:4000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-    location / { try_files $uri $uri/ /index.html; }
-}
-
-server {
-    listen 3001;
-    server_name admin.lonestarpediatrics.com _;
-    client_max_body_size 100M;
-    root /var/www/admin;
-    index index.html;
-    location ~* \.mjs$ { default_type application/javascript; try_files $uri =404; }
-    location /assets/ { try_files $uri =404; }
-    location /api/ {
-        proxy_pass http://127.0.0.1:4000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-    location / { try_files $uri $uri/ /index.html; }
-}
-NGINXEOF
-
-            # Remove stale per-site fragments so there are no conflicting server blocks
-            sudo rm -f /etc/nginx/conf.d/patient.conf /etc/nginx/conf.d/admin.conf /etc/nginx/conf.d/api.conf
-
             sudo nginx -t && sudo systemctl reload nginx

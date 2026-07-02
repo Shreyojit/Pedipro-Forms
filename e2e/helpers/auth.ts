@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 
 export const ADMIN = {
   practiceName: 'Lone Star Pediatrics',
-  email: 'admin@lonestarpediatrics.com',
+  email: 'admin@lonestarkidz.com',
   password: 'Admin@12345',
 };
 

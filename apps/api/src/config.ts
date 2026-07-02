@@ -19,9 +19,10 @@ export const config = {
   corsOrigin: process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean)
     : [
-        'https://admin.lonestarpediatrics.com',
-        'https://lonestarpediatrics.com',
-        'https://www.lonestarpediatrics.com',
+        'https://admin.lonestarkidz.com',
+        'https://portal.lonestarkidz.com',
+        'https://lonestarkidz.com',
+        'https://www.lonestarkidz.com',
         'http://localhost:5173',
         'http://localhost:5174',
       ],
