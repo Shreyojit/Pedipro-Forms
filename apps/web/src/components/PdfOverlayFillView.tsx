@@ -100,6 +100,8 @@ export function PdfOverlayFillView({
 
                   if (field.type === 'text') {
                     const browserField = pdfBoxToBrowserBox(field, pageSizeForField.height);
+                    const fontPx = (field.fontSize ?? 10) * PDF_DISPLAY_SCALE;
+                    const maxH = Math.max(fontPx * 2.2, 22);
                     return (
                       <input
                         key={field.id}
@@ -109,8 +111,8 @@ export function PdfOverlayFillView({
                           left: browserField.x,
                           top: browserField.y,
                           width: browserField.width,
-                          height: browserField.height,
-                          fontSize: (field.fontSize ?? 10) * PDF_DISPLAY_SCALE,
+                          height: Math.min(browserField.height, maxH),
+                          fontSize: fontPx,
                         }}
                         value={String(responses[field.key] ?? '')}
                         onChange={(e) => setResponse(field.key, e.target.value)}

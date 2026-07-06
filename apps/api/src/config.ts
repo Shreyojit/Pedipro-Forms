@@ -19,12 +19,12 @@ export const config = {
   corsOrigin: process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean)
     : [
-        'https://admin.lonestar.pediatricsformnow.com',
-        'https://patient.lonestar.pediatricsformnow.com',
+        'https://admin.lonestar.patientformsnow.com',
+        'https://patient.lonestar.patientformsnow.com',
         'http://localhost:5173',
         'http://localhost:5174',
       ],
-  frontendUrl: process.env.FRONTEND_URL ?? 'https://patient.lonestar.pediatricsformnow.com',
+  frontendUrl: process.env.FRONTEND_URL ?? 'https://patient.lonestar.patientformsnow.com',
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID ?? '',
     authToken: process.env.TWILIO_AUTH_TOKEN ?? '',
