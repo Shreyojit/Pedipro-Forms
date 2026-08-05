@@ -519,6 +519,7 @@ export function listPatients(practiceId: string, search?: string): Array<Record<
   return db
     .prepare(
       `select p.id, p.child_first_name, p.child_last_name, p.child_dob, p.visit_type, p.updated_at,
+              p.created_at,
               p.patient_acct_no,
               na.next_appointment_date, na.next_appointment_time,
               s.status as latest_submission_status,
@@ -527,7 +528,12 @@ export function listPatients(practiceId: string, search?: string): Array<Record<
               loc.facility_group_name  as facility_group_name,
               loc.state                as location_state,
               loc.city                 as location_city,
-              loc.id                   as location_id
+              loc.id                   as location_id,
+              exists (
+                select 1 from form_assignments fa
+                where fa.patient_id = p.id
+                  and date(fa.created_at) = date(p.created_at)
+              ) as assigned_same_day
        from patients p
        left join (
          select patient_id, appointment_date as next_appointment_date, appointment_time as next_appointment_time

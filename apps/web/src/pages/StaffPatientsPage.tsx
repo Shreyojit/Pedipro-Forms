@@ -53,6 +53,10 @@ type Patient = Record<string, unknown> & {
   location_state: string | null;
   location_city: string | null;
   location_id: string | null;
+  /** When this patient row was created (i.e. uploaded via schedule import) */
+  created_at: string;
+  /** 1 if a form was assigned the same calendar day this patient was uploaded, else 0 */
+  assigned_same_day: number;
 };
 
 function formatNextAppt(patient: Patient): string {
@@ -61,6 +65,16 @@ function formatNextAppt(patient: Patient): string {
   if (!d && !t) return '—';
   if (d && t) return `${d} ${t}`;
   return String(d ?? t ?? '—');
+}
+
+/** Sortable-column state: which key, and which direction. */
+type SortKey = 'appointment' | 'uploaded';
+type SortState = { key: SortKey; dir: 'asc' | 'desc' } | null;
+
+function apptSortValue(p: Patient): string {
+  // Sort patients with no appointment to the bottom regardless of direction.
+  if (!p.next_appointment_date) return '9999-99-99';
+  return `${p.next_appointment_date} ${p.next_appointment_time ?? ''}`;
 }
 
 const VISIT_TYPE_OPTIONS = [
@@ -139,6 +153,22 @@ export function StaffPatientsPage({ token }: Props) {
   const [filterRegion, setFilterRegion] = useState('');   // Facility Group / Region
   const [filterLocation, setFilterLocation] = useState(''); // Clinic / Facility
   const [filterAppt, setFilterAppt] = useState('');
+
+  // ── Sort ─────────────────────────────────────────────────────────────────
+  const [sort, setSort] = useState<SortState>(null);
+
+  function toggleSort(key: SortKey) {
+    setSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' };
+      if (prev.dir === 'asc') return { key, dir: 'desc' };
+      return null; // third click clears sort, back to upload-order default
+    });
+  }
+
+  function sortIndicator(key: SortKey): string {
+    if (!sort || sort.key !== key) return '';
+    return sort.dir === 'asc' ? ' ▲' : ' ▼';
+  }
 
   const hasActiveFilters =
     search || filterVisit || filterStatus || filterPortal || filterRegion || filterLocation || filterAppt;
@@ -252,6 +282,43 @@ export function StaffPatientsPage({ token }: Props) {
     });
   }, [patients, search, filterVisit, filterStatus, filterPortal, filterRegion, filterLocation, filterAppt]);
 
+  // ── Sort (applied after filtering) ────────────────────────────────────────
+  const sorted = useMemo(() => {
+    if (!sort) return filtered;
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      const av = sort.key === 'appointment' ? apptSortValue(a) : (a.created_at ?? '');
+      const bv = sort.key === 'appointment' ? apptSortValue(b) : (b.created_at ?? '');
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return 0;
+    });
+  }, [filtered, sort]);
+
+  // ── Pagination (applied after filtering + sorting) ────────────────────────
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  // Any change to the filtered/sorted result set invalidates the current page.
+  useEffect(() => {
+    setPage(1);
+  }, [search, filterVisit, filterStatus, filterPortal, filterRegion, filterLocation, filterAppt, sort]);
+
+  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const paged = useMemo(
+    () => sorted.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [sorted, currentPage, pageSize],
+  );
+
+  // ── Upload stats: patients uploaded today, and how many already got a same-day form assignment ──
+  const uploadStats = useMemo(() => {
+    const today = todayStr();
+    const uploadedToday = patients.filter((p) => (p.created_at ?? '').slice(0, 10) === today);
+    const assignedSameDay = uploadedToday.filter((p) => p.assigned_same_day);
+    return { uploadedToday: uploadedToday.length, assignedSameDay: assignedSameDay.length };
+  }, [patients]);
+
   // ── Excel upload ──────────────────────────────────────────────────────────
   async function handleUploadExcel() {
     const f = fileRef.current?.files?.[0];
@@ -305,6 +372,23 @@ export function StaffPatientsPage({ token }: Props) {
           <p className="text-muted" style={{ margin: 0 }}>
             Need to manage forms? <Link to="/staff/templates">Open form builder</Link>
           </p>
+        </div>
+
+        {/* ── Upload stats ── */}
+        <div
+          style={{
+            display: 'flex',
+            gap: 14,
+            marginBottom: 16,
+            flexWrap: 'wrap',
+          }}
+        >
+          <StatTile label="Patients uploaded today" value={uploadStats.uploadedToday} />
+          <StatTile
+            label="Forms assigned same day as upload"
+            value={`${uploadStats.assignedSameDay} / ${uploadStats.uploadedToday}`}
+            warn={uploadStats.uploadedToday > 0 && uploadStats.assignedSameDay < uploadStats.uploadedToday}
+          />
         </div>
 
         {/* ── Filter bar ── */}
@@ -591,7 +675,20 @@ export function StaffPatientsPage({ token }: Props) {
                 <th>Chart #</th>
                 {(regionOptions.length > 1 || locationOptions.length > 1) && <th>Region / Clinic</th>}
                 <th>DOB</th>
-                <th>Appointment</th>
+                <th
+                  onClick={() => toggleSort('appointment')}
+                  style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                  title="Click to sort by appointment date"
+                >
+                  Appointment{sortIndicator('appointment')}
+                </th>
+                <th
+                  onClick={() => toggleSort('uploaded')}
+                  style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+                  title="Click to sort by the date this patient's record was uploaded"
+                >
+                  Uploaded{sortIndicator('uploaded')}
+                </th>
                 <th>Visit type</th>
                 <th>Form status</th>
                 <th>Parent portal</th>
@@ -604,7 +701,7 @@ export function StaffPatientsPage({ token }: Props) {
               {filtered.length === 0 && (
                 <tr>
                   <td
-                    colSpan={(regionOptions.length > 1 || locationOptions.length > 1) ? 12 : 11}
+                    colSpan={(regionOptions.length > 1 || locationOptions.length > 1) ? 13 : 12}
                     style={{ textAlign: 'center', color: '#888', padding: '24px 0' }}
                   >
                     {patients.length === 0
@@ -613,7 +710,7 @@ export function StaffPatientsPage({ token }: Props) {
                   </td>
                 </tr>
               )}
-              {filtered.map((patient) => (
+              {paged.map((patient) => (
                 <tr key={patient.id}>
                   <td style={{ fontWeight: 600 }}>{patient.child_first_name}</td>
                   <td style={{ fontWeight: 600 }}>{patient.child_last_name}</td>
@@ -646,6 +743,18 @@ export function StaffPatientsPage({ token }: Props) {
                   )}
                   <td style={{ fontSize: 13 }}>{patient.child_dob ?? '—'}</td>
                   <td style={{ fontSize: 13 }}>{formatNextAppt(patient)}</td>
+                  <td style={{ fontSize: 13 }}>
+                    {patient.created_at ? patient.created_at.slice(0, 10) : '—'}
+                    {!patient.assigned_same_day &&
+                      patient.created_at?.slice(0, 10) === todayStr() && (
+                        <span
+                          title="Uploaded today but no form assigned yet"
+                          style={{ color: '#dc2626', marginLeft: 4 }}
+                        >
+                          ⚠
+                        </span>
+                      )}
+                  </td>
                   <td>
                     <VisitBadge type={patient.visit_type} />
                   </td>
@@ -724,12 +833,105 @@ export function StaffPatientsPage({ token }: Props) {
             </tbody>
           </table>
         </div>
+
+        {/* ── Pagination ── */}
+        {sorted.length > 0 && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: 10,
+              marginTop: 12,
+            }}
+          >
+            <div style={{ fontSize: 13, color: '#555' }}>
+              Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, sorted.length)} of{' '}
+              {sorted.length}
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                style={{ fontSize: 12, marginLeft: 10, padding: '2px 4px' }}
+              >
+                {[25, 50, 100, 200].map((n) => (
+                  <option key={n} value={n}>{n} / page</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                disabled={currentPage <= 1}
+                onClick={() => setPage(1)}
+              >
+                « First
+              </button>
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                disabled={currentPage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                ‹ Prev
+              </button>
+              <span style={{ fontSize: 13, padding: '0 4px' }}>
+                Page {currentPage} of {pageCount}
+              </span>
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                disabled={currentPage >= pageCount}
+                onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+              >
+                Next ›
+              </button>
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                disabled={currentPage >= pageCount}
+                onClick={() => setPage(pageCount)}
+              >
+                Last »
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 // ── Small helper components ───────────────────────────────────────────────────
+
+function StatTile({
+  label,
+  value,
+  warn,
+}: {
+  label: string;
+  value: string | number;
+  warn?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        background: warn ? '#fef2f2' : 'var(--color-surface, #f9fafb)',
+        border: `1px solid ${warn ? '#fecaca' : 'var(--color-border, #e5e7eb)'}`,
+        borderRadius: 10,
+        padding: '10px 16px',
+        minWidth: 180,
+      }}
+    >
+      <div style={{ fontSize: 12, color: warn ? '#991b1b' : '#6b7280', fontWeight: 500 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: warn ? '#dc2626' : '#111' }}>{value}</div>
+    </div>
+  );
+}
 
 function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
