@@ -55,14 +55,23 @@ export function listAssignmentsForPractice(practiceId: string): Array<Record<str
   return db
     .prepare(
       `select
-        fa.id, fa.token, fa.status, fa.expires_at, fa.created_at, fa.submission_id,
+        fa.id, fa.token, fa.status, fa.expires_at, fa.created_at, fa.submission_id, fa.patient_id,
         p.child_first_name, p.child_last_name, p.child_dob,
         t.name as template_name, t.template_key,
-        su.email as assigned_by_email
+        su.email as assigned_by_email,
+        na.next_appointment_date, na.next_appointment_time
        from form_assignments fa
        join patients p on p.id = fa.patient_id
        join pdf_templates t on t.id = fa.template_id
        join staff_users su on su.id = fa.assigned_by
+       left join (
+         select patient_id, appointment_date as next_appointment_date, appointment_time as next_appointment_time
+         from (
+           select patient_id, appointment_date, appointment_time,
+                  row_number() over (partition by patient_id order by created_at desc, id desc) as rn
+           from appointments
+         ) x where rn = 1
+       ) na on na.patient_id = p.id
        where fa.practice_id = ?
        order by fa.created_at desc`,
     )

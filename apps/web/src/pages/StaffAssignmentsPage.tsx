@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, authHeader } from '../lib/api';
-import { formatAssignmentStatus } from '../lib/staffLabels';
 
 type Props = {
   token: string | null;
@@ -19,13 +18,68 @@ type AssignmentRecord = {
   status: string;
   expires_at: string;
   created_at: string;
+  patient_id: string;
   child_first_name: string;
   child_last_name: string;
   child_dob: string;
   template_name: string;
   assigned_by_email: string;
   submission_id: string | null;
+  next_appointment_date: string | null;
+  next_appointment_time: string | null;
 };
+
+/** One row per patient, aggregating every form assigned to them. */
+type PatientFormRow = {
+  patientId: string;
+  child_first_name: string;
+  child_last_name: string;
+  child_dob: string;
+  next_appointment_date: string | null;
+  next_appointment_time: string | null;
+  forms: Array<{ assignmentId: string; template_name: string; status: string }>;
+};
+
+function groupByPatient(assignments: AssignmentRecord[]): PatientFormRow[] {
+  const byPatient = new Map<string, PatientFormRow>();
+  for (const a of assignments) {
+    let row = byPatient.get(a.patient_id);
+    if (!row) {
+      row = {
+        patientId: a.patient_id,
+        child_first_name: a.child_first_name,
+        child_last_name: a.child_last_name,
+        child_dob: a.child_dob,
+        next_appointment_date: a.next_appointment_date,
+        next_appointment_time: a.next_appointment_time,
+        forms: [],
+      };
+      byPatient.set(a.patient_id, row);
+    }
+    row.forms.push({ assignmentId: a.id, template_name: a.template_name, status: a.status });
+  }
+  const rows = Array.from(byPatient.values());
+  // Most recent (soonest) appointment first; patients with no appointment date sort last.
+  rows.sort((a, b) => {
+    const av = a.next_appointment_date ?? '9999-99-99';
+    const bv = b.next_appointment_date ?? '9999-99-99';
+    if (av !== bv) return av < bv ? -1 : 1;
+    const at = a.next_appointment_time ?? '';
+    const bt = b.next_appointment_time ?? '';
+    return at < bt ? -1 : at > bt ? 1 : 0;
+  });
+  return rows;
+}
+
+function formStatusStyle(status: string) {
+  const map: Record<string, { bg: string; color: string; label: string }> = {
+    pending:     { bg: '#cfe2ff', color: '#084298', label: 'Form Sent' },
+    in_progress: { bg: '#fff3cd', color: '#856404', label: 'Started' },
+    completed:   { bg: '#d4edda', color: '#155724', label: 'Completed' },
+    expired:     { bg: '#f8d7da', color: '#721c24', label: 'Expired' },
+  };
+  return map[status] ?? { bg: '#f3f4f6', color: '#374151', label: status };
+}
 
 type PatientSearchResult = {
   id: string;
@@ -42,6 +96,8 @@ export function StaffAssignmentsPage({ token }: Props) {
   const [templates, setTemplates] = useState<PublishedTemplate[]>([]);
   const [assignments, setAssignments] = useState<AssignmentRecord[]>([]);
   const [error, setError] = useState('');
+
+  const patientRows = useMemo(() => groupByPatient(assignments), [assignments]);
 
   const [showForm, setShowForm] = useState(false);
   const [patientMode, setPatientMode] = useState<'existing' | 'new'>('existing');
@@ -202,14 +258,6 @@ export function StaffAssignmentsPage({ token }: Props) {
       setError((e as Error).message);
     }
   }
-
-  const statusStyle = (status: string) => ({
-    padding: '2px 8px',
-    borderRadius: 4,
-    fontSize: 12,
-    background: status === 'completed' ? '#d4edda' : status === 'expired' ? '#f8d7da' : status === 'in_progress' ? '#fff3cd' : '#cfe2ff',
-    color: status === 'completed' ? '#155724' : status === 'expired' ? '#721c24' : status === 'in_progress' ? '#856404' : '#084298',
-  });
 
   return (
     <div className="container">
@@ -428,31 +476,72 @@ export function StaffAssignmentsPage({ token }: Props) {
         {assignments.length > 0 && (
           <div style={{ marginTop: 24 }}>
             <h3>All sent forms</h3>
+            <p style={{ marginTop: -8, marginBottom: 12, fontSize: 13, color: '#666' }}>
+              Sorted by soonest appointment first. Each patient&apos;s forms show whether they were opened
+              (Started) or submitted (Completed) — not just sent.
+            </p>
             <table className="table">
               <thead>
                 <tr>
                   <th>Patient</th>
-                  <th>Form</th>
-                  <th>Status</th>
-                  <th>Assigned by</th>
-                  <th>Action</th>
+                  <th>DOB</th>
+                  <th>Appointment</th>
+                  <th>Form-Status</th>
                 </tr>
               </thead>
               <tbody>
-                {assignments.map((a) => (
-                  <tr key={a.id}>
-                    <td>{a.child_first_name} {a.child_last_name}</td>
-                    <td>{a.template_name}</td>
-                    <td><span style={statusStyle(a.status)}>{formatAssignmentStatus(a.status)}</span></td>
-                    <td>{a.assigned_by_email}</td>
+                {patientRows.map((row) => (
+                  <tr key={row.patientId}>
+                    <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+                      {row.child_first_name} {row.child_last_name}
+                    </td>
+                    <td style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{row.child_dob ?? '—'}</td>
+                    <td style={{ fontSize: 13, whiteSpace: 'nowrap' }}>
+                      {row.next_appointment_date
+                        ? `${row.next_appointment_date}${row.next_appointment_time ? ' ' + row.next_appointment_time : ''}`
+                        : '—'}
+                    </td>
                     <td>
-                      <button
-                        className="secondary"
-                        style={{ fontSize: 12, padding: '2px 8px', color: '#c00', borderColor: '#c00' }}
-                        onClick={() => handleDeleteAssignment(a.id)}
-                      >
-                        Delete
-                      </button>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {row.forms.map((f) => {
+                          const s = formStatusStyle(f.status);
+                          return (
+                            <span
+                              key={f.assignmentId}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                background: s.bg,
+                                color: s.color,
+                                borderRadius: 4,
+                                padding: '3px 4px 3px 8px',
+                                fontSize: 12,
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              <strong>{f.template_name}:</strong> {s.label}
+                              <button
+                                type="button"
+                                title={`Delete ${f.template_name} assignment`}
+                                onClick={() => handleDeleteAssignment(f.assignmentId)}
+                                style={{
+                                  background: 'transparent',
+                                  border: 'none',
+                                  color: s.color,
+                                  cursor: 'pointer',
+                                  fontSize: 13,
+                                  lineHeight: 1,
+                                  padding: '0 2px',
+                                  opacity: 0.6,
+                                }}
+                              >
+                                ×
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -13,7 +13,7 @@ export function formatVisitType(visitType: string | null | undefined): string {
 
 export function formatAssignmentStatus(status: string): string {
   const map: Record<string, string> = {
-    pending: 'Not opened',
+    pending: 'Form Sent',
     in_progress: 'Started',
     completed: 'Completed',
     expired: 'Expired',
