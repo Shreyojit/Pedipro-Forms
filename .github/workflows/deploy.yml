@@ -12,76 +12,39 @@ on:
 
 jobs:
   # ── Deploy API ────────────────────────────────────────────────────────────────
+  # Deploys by having the server pull and rebuild its own git checkout at
+  # /home/ec2-user/Pedipro-Forms, then restart the existing pm2 process in place.
+  # This is the checkout pm2's "lsp-api" process actually runs from (confirmed via
+  # `pm2 describe lsp-api` script path) and where the real production database
+  # (apps/data/pediform.db) lives — NOT a separate /var/app tarball, which was
+  # being built and shipped here on every push but never actually read by anything.
+  # Secrets (JWT_SECRET, etc.) live in a persistent, manually-managed apps/api/.env
+  # on the server and are intentionally left untouched by this job — `git reset
+  # --hard` only affects tracked files, so that file survives every deploy.
   deploy-api:
     name: Deploy API
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install and build
-        working-directory: apps/api
-        run: |
-          for i in 1 2 3; do npm install --include=dev && break || { echo "npm install attempt $i failed, retrying…"; sleep 15; }; done
-          npm run build
-
-      - name: Prepare deployment package
-        run: |
-          mkdir -p deploy
-          cp -r apps/api/dist deploy/
-          jq 'del(.scripts) | del(.devDependencies)' apps/api/package.json > deploy/package.json
-          npm install --omit=dev --prefix deploy
-          tar -czf lsp-api.tar.gz -C deploy .
-
-      - name: Copy package to EC2
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ec2-user
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: lsp-api.tar.gz
-          target: /home/ec2-user/
-
-      - name: Extract and restart
+      - name: Pull, build, and restart on EC2
         uses: appleboy/ssh-action@v1.0.3
-        env:
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
-          CORS_ORIGIN: ${{ secrets.CORS_ORIGIN }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: SMTP_HOST,SMTP_PORT,SMTP_USER,SMTP_PASS,EMAIL_FROM,FRONTEND_URL,CORS_ORIGIN,JWT_SECRET
           script: |
-            pm2 stop lsp-api || true
-            sudo rm -rf /var/app/dist /var/app/node_modules
-            sudo mkdir -p /var/app
-            sudo chown -R ec2-user:ec2-user /var/app
-            tar -xzf /home/ec2-user/lsp-api.tar.gz -C /var/app
-            rm /home/ec2-user/lsp-api.tar.gz
-            touch /var/app/.env
-            for key in SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS EMAIL_FROM FRONTEND_URL CORS_ORIGIN JWT_SECRET; do
-              val=$(eval echo \$$key)
-              sed -i "/^${key}=/d" /var/app/.env
-              echo "${key}=${val}" >> /var/app/.env
-            done
-            chmod 600 /var/app/.env
-            DB_FILE=$(grep -E '^DB_PATH=' /var/app/.env | cut -d= -f2- | tr -d '"' | xargs)
-            if [ -z "$DB_FILE" ]; then DB_FILE="/var/app/data/lsp.db"; fi
+            set -e
+            cd /home/ec2-user/Pedipro-Forms
+            git fetch origin main
+            git reset --hard origin/main
+            cd apps/api
+            npm install --include=dev
+            npm run build
+            DB_FILE="/home/ec2-user/Pedipro-Forms/apps/data/pediform.db"
             if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB_FILE" ]; then
               sqlite3 "$DB_FILE" "DELETE FROM pdf_template_fields WHERE template_id='3761fe08-1151-4f61-8411-75c78332ca2e'; DELETE FROM field_groups WHERE template_id='3761fe08-1151-4f61-8411-75c78332ca2e';"
               sqlite3 "$DB_FILE" "DELETE FROM pdf_template_fields WHERE template_id='d5dc70ff-7d29-4f74-9aea-c387eec9e6c4'; DELETE FROM field_groups WHERE template_id='d5dc70ff-7d29-4f74-9aea-c387eec9e6c4';"
             fi
-            pm2 restart lsp-api || pm2 start /var/app/dist/index.js --name lsp-api
+            pm2 restart lsp-api
             pm2 save
 
   # ── Deploy Frontend ───────────────────────────────────────────────────────────

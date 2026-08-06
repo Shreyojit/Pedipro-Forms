@@ -60,7 +60,7 @@ app.use(helmet({
   crossOriginResourcePolicy: false,
   crossOriginOpenerPolicy: false,
 }));
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '100mb' }));
 app.use(morgan('dev'));
 
 app.get('/health', (_req, res) => {
